@@ -7,22 +7,42 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prop-types/15.8.1/prop-types.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/recharts@2.12.7/umd/Recharts.min.js"></script>
+    <!-- עודכנה גרסת Recharts כדי לתקן את שגיאת ה-oneOfType שחווית -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.1.9/Recharts.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/lucide@0.424.0/dist/umd/lucide.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    
     <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;700&display=swap" rel="stylesheet">
+    
     <style>
-        body { font-family: "Fredoka", sans-serif; margin: 0; padding: 0; overflow-x: hidden; overflow-y: auto; min-height: 100vh; background-color: #f5f3ff; -webkit-user-select: none; user-select: none; }
+        body { 
+            font-family: "Fredoka", sans-serif; 
+            margin: 0; padding: 0; 
+            overflow-x: hidden; overflow-y: auto; 
+            min-height: 100vh; background-color: #f5f3ff;
+            -webkit-user-select: none; user-select: none;
+        }
         #root { min-height: 100vh; display: flex; flex-direction: column; }
         .animate-bounceIn { animation: bounceIn 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
-        @keyframes bounceIn { 0% { opacity: 0; transform: scale(0.3); } 50% { opacity: 1; transform: scale(1.05); } 100% { transform: scale(1); } }
+        @keyframes bounceIn { 
+            0% { opacity: 0; transform: scale(0.3); } 
+            50% { opacity: 1; transform: scale(1.05); } 
+            100% { transform: scale(1); } 
+        }
         .noise-bar { transition: width 0.05s linear; }
         .active-press:active { transform: translateY(4px); box-shadow: none; }
         #qrcode img { margin: 0 auto; border: 8px solid white; border-radius: 1rem; }
-        .mic-active { animation: pulse-ring 1.5s cubic-bezier(0.455, 0.03, 0.515, 0.955) infinite; }
-        @keyframes pulse-ring { 0% { transform: scale(1); } 50% { transform: scale(1.1); } 100% { transform: scale(1); } }
+        
+        .mic-active {
+            animation: pulse-ring 1.5s cubic-bezier(0.455, 0.03, 0.515, 0.955) infinite;
+        }
+        @keyframes pulse-ring {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
+        }
     </style>
 </head>
 <body>
@@ -54,12 +74,23 @@
         const Icon = ({ name, size = 24, className = "" }) => {
             const iconRef = useRef(null);
             useEffect(() => {
-                if (iconRef.current && window.lucide) {
+                if (iconRef.current) {
                     iconRef.current.innerHTML = "";
-                    lucide.createIcons({ icons: { [name]: lucide[name] }, attrs: { width: size, height: size, class: className } });
+                    try {
+                        if (window.lucide && window.lucide.createIcons) {
+                            lucide.createIcons({
+                                icons: { [name]: lucide[name] },
+                                attrs: { width: size, height: size, class: className }
+                            });
+                        } else {
+                            iconRef.current.innerText = "•"; 
+                        }
+                    } catch (e) {
+                        console.error("Lucide error:", e);
+                    }
                 }
             }, [name, size, className]);
-            return <span ref={iconRef} />;
+            return <span ref={iconRef} className="inline-block leading-none" />;
         };
 
         const QRCodeContainer = ({ url }) => {
@@ -67,7 +98,11 @@
             useEffect(() => {
                 if (qrRef.current) {
                     qrRef.current.innerHTML = "";
-                    new QRCode(qrRef.current, { text: url, width: 140, height: 140, colorDark: "#6b21a8", colorLight: "#ffffff", correctLevel: QRCode.CorrectLevel.H });
+                    new QRCode(qrRef.current, {
+                        text: url, width: 140, height: 140,
+                        colorDark: "#6b21a8", colorLight: "#ffffff",
+                        correctLevel: QRCode.CorrectLevel.H
+                    });
                 }
             }, [url]);
             return <div id="qrcode" ref={qrRef} className="flex justify-center shadow-lg p-2 bg-white rounded-2xl border-2 border-purple-100"></div>;
@@ -80,6 +115,7 @@
             const [noiseLevel, setNoiseLevel] = useState(0);
             const [measuring, setMeasuring] = useState(false);
             const [noiseResult, setNoiseResult] = useState("");
+            const [permissionStatus, setPermissionStatus] = useState("unknown"); 
             
             const audioCtxRef = useRef(null);
             const streamRef = useRef(null);
@@ -121,12 +157,63 @@
                 return counts[0] || counts[1] ? [{name: q.options[0], value: counts[0]}, {name: q.options[1], value: counts[1]}] : null;
             }, [rawRows, currentIdx]);
 
+            const toggleMeasurement = async () => {
+                if (noiseResult) return;
+
+                if (measuring) {
+                    stopMeasuring(noiseLevel);
+                    return;
+                }
+
+                try {
+                    setMeasuring(true);
+                    setNoiseResult("");
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    streamRef.current = stream;
+                    setPermissionStatus("granted");
+
+                    audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+                    const source = audioCtxRef.current.createMediaStreamSource(stream);
+                    const analyser = audioCtxRef.current.createAnalyser();
+                    analyser.fftSize = 256;
+                    source.connect(analyser);
+
+                    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+                    let maxVal = 0;
+
+                    const draw = () => {
+                        if (!streamRef.current) return;
+                        analyser.getByteFrequencyData(dataArray);
+                        let avg = dataArray.reduce((a, b) => a + b) / dataArray.length;
+                        let val = Math.min(100, avg * 2);
+                        setNoiseLevel(val);
+                        if (val > maxVal) maxVal = val;
+                        animationRef.current = requestAnimationFrame(draw);
+                    };
+                    draw();
+
+                    setTimeout(() => {
+                        if (streamRef.current) stopMeasuring(maxVal);
+                    }, 4000);
+
+                } catch (err) {
+                    console.error("Mic access denied:", err);
+                    setMeasuring(false);
+                    setPermissionStatus("denied");
+                    alert("נא לאשר גישה למיקרופון בהגדרות הדפדפן!");
+                }
+            };
+
             const stopMeasuring = (finalVal = 0) => {
                 if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
                 streamRef.current = null;
                 setMeasuring(false);
                 cancelAnimationFrame(animationRef.current);
-                if (audioCtxRef.current) { audioCtxRef.current.close(); audioCtxRef.current = null; }
+                if (audioCtxRef.current) {
+                    audioCtxRef.current.close();
+                    audioCtxRef.current = null;
+                }
+                
                 setNoiseResult(finalVal > 30 ? "הילדים מסכימים! 🎉" : "הילדים לא מסכימים... 😬");
             };
 
@@ -134,67 +221,128 @@
                 if (screen === "intro") setScreen("question");
                 else if (screen === "question") setScreen("noise");
                 else {
-                    if (currentIdx < QUESTIONS.length - 1) { setCurrentIdx(prev => prev + 1); setScreen("question"); setNoiseResult(""); setNoiseLevel(0); }
-                    else { setScreen("intro"); setCurrentIdx(0); }
+                    if (currentIdx < QUESTIONS.length - 1) {
+                        setCurrentIdx(prev => prev + 1);
+                        setScreen("question");
+                        setNoiseResult("");
+                        setNoiseLevel(0);
+                    } else {
+                        setScreen("intro");
+                        setCurrentIdx(0);
+                    }
                 }
             };
 
-            if (screen === "intro") return (
-                <div className="flex-1 flex flex-col items-center justify-center p-4 animate-bounceIn">
-                    <div className="bg-white p-8 rounded-[2.5rem] shadow-2xl border-b-[10px] border-purple-200 max-w-md w-full text-center">
-                        <h1 className="text-3xl font-black text-purple-900 mb-6 italic">הורים vs ילדים</h1>
-                        <div className="mb-6"><QRCodeContainer url={SURVEY_URL} /><p className="mt-3 text-purple-600 font-bold">סרקו כדי להשתתף!</p></div>
-                        <button onClick={handleNext} className="w-full bg-purple-600 text-white text-xl font-bold py-5 rounded-2xl border-b-8 border-purple-900 active-press transition-all">התחלת התוצאות</button>
+            if (screen === "intro") {
+                return (
+                    <div className="flex-1 flex flex-col items-center justify-center p-4 animate-bounceIn">
+                        <div className="bg-white p-8 rounded-[2.5rem] shadow-2xl border-b-[10px] border-purple-200 max-w-md w-full text-center">
+                            <h1 className="text-3xl font-black text-purple-900 mb-6 italic">הורים vs ילדים</h1>
+                            <div className="mb-6">
+                                <QRCodeContainer url={SURVEY_URL} />
+                                <p className="mt-3 text-purple-600 font-bold">סרקו כדי להשתתף בלייב!</p>
+                            </div>
+                            <button onClick={handleNext} className="w-full bg-purple-600 text-white text-xl font-bold py-5 rounded-2xl border-b-8 border-purple-900 active-press transition-all">התחלת התוצאות</button>
+                        </div>
                     </div>
-                </div>
-            );
+                );
+            }
 
             const q = QUESTIONS[currentIdx];
+
             return (
                 <div className="flex-1 flex flex-col h-full overflow-hidden">
                     <header className="bg-white p-4 border-b-4 border-purple-100 flex justify-between items-center px-6 sticky top-0 z-50 shrink-0">
-                        <div className="flex items-center gap-3"><button onClick={() => setScreen("intro")} className="p-2 bg-purple-50 rounded-xl text-purple-600 active-press"><Icon name="Home" /></button><h2 className="text-xl font-bold text-purple-900">{q.title}</h2></div>
+                        <div className="flex items-center gap-3">
+                            <button onClick={() => setScreen("intro")} className="p-2 bg-purple-50 rounded-xl text-purple-600 active-press"><Icon name="Home" size={24} /></button>
+                            <h2 className="text-xl font-bold text-purple-900 truncate max-w-[180px]">{q.title}</h2>
+                        </div>
                         <div className="bg-purple-100 px-3 py-1 rounded-full text-purple-700 font-bold text-sm">שאלה {currentIdx + 1}/10</div>
                     </header>
+
                     <main className="flex-1 p-4 flex flex-col gap-4 overflow-y-auto">
                         {screen === "question" ? (
                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 flex-1">
-                                <div className="bg-white p-5 rounded-[2rem] shadow-lg flex flex-col border-b-4 border-gray-100">
-                                    <p className="text-xl font-bold text-gray-800 mb-2">{q.question}</p>
-                                    <div className="flex flex-col gap-4">
-                                        <div className="rounded-2xl overflow-hidden border-2 border-purple-50 relative mt-2 h-64">
-                                            <img src={`https://drive.google.com/thumbnail?id=${q.img}&sz=w800`} className="w-full h-full object-cover" alt="שאלה" />
-                                        </div>
-                                        <button onClick={handleNext} className="w-full bg-green-500 text-white py-5 rounded-2xl font-black text-xl border-b-8 border-green-700 active-press">מה הילדים אומרים? 🎤</button>
+                                {/* חלון השאלה והתמונה - נפרס על פני כל הגובה (h-full ו-justify-between) */}
+                                <div className="bg-white p-5 rounded-[2rem] shadow-lg flex flex-col justify-between border-b-4 border-gray-100 h-full min-h-[400px]">
+                                    <p className="text-xl font-bold text-gray-800 mb-4 leading-tight">{q.question}</p>
+                                    
+                                    <div className="flex-1 w-full flex items-center justify-center rounded-2xl overflow-hidden border-2 border-purple-50 relative bg-gray-50">
+                                        <img 
+                                            src={`https://drive.google.com/thumbnail?id=${q.img}&sz=w800`} 
+                                            className="w-full h-full object-cover origin-center rounded-2xl" 
+                                            style={{ transform: 'scale(0.7)' }} 
+                                            alt="שאלה" 
+                                        />
                                     </div>
                                 </div>
-                                <div className="bg-white p-5 rounded-[2rem] shadow-lg flex flex-col items-center border-b-4 border-purple-100">
+
+                                {/* חלון התוצאות והכפתור - נפרס על פני כל הגובה */}
+                                <div className="bg-white p-5 rounded-[2rem] shadow-lg flex flex-col justify-between items-center border-b-4 border-purple-100 h-full min-h-[400px]">
                                     <h3 className="text-2xl font-black text-purple-600 mb-4">תשובות ההורים:</h3>
+                                    
                                     {stats ? (
-                                        <div className="w-full flex-1 flex flex-col">
-                                            <div className="w-full h-[220px]">
+                                        <div className="w-full flex-1 flex flex-col justify-center">
+                                            <div className="w-full h-[200px] flex-1 max-h-[40vh]">
                                                 <ResponsiveContainer width="100%" height="100%">
-                                                    <PieChart><Pie data={stats} dataKey="value" cx="50%" cy="50%" innerRadius="40%" outerRadius="80%" paddingAngle={8} stroke="none">{stats.map((_, i) => <Cell key={i} fill={COLORS[i]} />)}</Pie><Tooltip /></PieChart>
+                                                    <PieChart>
+                                                        <Pie data={stats} dataKey="value" cx="50%" cy="50%" innerRadius="40%" outerRadius="80%" paddingAngle={8} stroke="none">
+                                                            {stats.map((_, i) => <Cell key={i} fill={COLORS[i]} />)}
+                                                        </Pie>
+                                                        <Tooltip />
+                                                    </PieChart>
                                                 </ResponsiveContainer>
                                             </div>
+                                            <div className="space-y-3 mt-4 w-full">
+                                                {stats.map((s, i) => (
+                                                    <div key={i} className="flex items-center p-3 rounded-2xl bg-gray-50 border-r-8 font-bold shadow-sm" style={{borderColor: COLORS[i]}}>
+                                                        <span className="flex-1 text-gray-700 text-sm">{s.name}</span>
+                                                        <span className="text-2xl text-purple-900 ml-2">{Math.round((s.value / (stats[0].value + stats[1].value)) * 100)}%</span>
+                                                    </div>
+                                                ))}
+                                            </div>
                                         </div>
-                                    ) : <div className="flex-1 flex items-center justify-center text-gray-300 italic py-10">אין נתונים...</div>}
+                                    ) : (
+                                        <div className="flex-1 flex items-center justify-center text-gray-300 italic py-10">עדיין אין נתונים...</div>
+                                    )}
+                                    
+                                    <button onClick={handleNext} className="w-full mt-6 bg-green-500 text-white py-5 rounded-2xl font-black text-xl border-b-8 border-green-700 active-press transition-all">מה הילדים אומרים? 🎤</button>
                                 </div>
                             </div>
                         ) : (
                             <div className="flex-1 flex flex-col items-center justify-center animate-bounceIn py-4">
                                 <div className="bg-white p-10 rounded-[3rem] shadow-2xl w-full max-w-md border-b-[12px] border-purple-200 text-center">
-                                    <h2 className="text-2xl font-black text-purple-900 mb-8">מד ההסכמה</h2>
-                                    <div className="w-full h-16 bg-gray-100 rounded-full mb-10 p-2 border-4 border-white overflow-hidden relative">
-                                        <div className="h-full rounded-full noise-bar bg-gradient-to-l from-purple-600 to-green-400" style={{width: `${noiseLevel}%`}}></div>
+                                    <h2 className="text-2xl font-black text-purple-900 mb-8 underline decoration-green-400 decoration-4 underline-offset-8">מד ההסכמה</h2>
+                                    
+                                    <div className="w-full h-16 bg-gray-100 rounded-full mb-10 p-2 shadow-inner border-4 border-white overflow-hidden relative">
+                                        <div className="h-full rounded-full noise-bar bg-gradient-to-l from-purple-600 via-pink-500 to-green-400 shadow-lg transition-all duration-100" style={{width: `${noiseLevel}%`}}></div>
+                                        <div className="absolute inset-0 flex items-center justify-center font-black text-purple-900/30 text-xl pointer-events-none">
+                                            {Math.round(noiseLevel)}%
+                                        </div>
                                     </div>
+
                                     {!noiseResult ? (
-                                        <button onClick={() => setMeasuring(!measuring)} className={`w-44 h-44 rounded-full flex flex-col items-center justify-center shadow-2xl ${measuring ? "bg-red-500 mic-active" : "bg-purple-600"}`}>
-                                            <Icon name="Mic" size={64} className="text-white" />
-                                            <span className="text-white font-black">{measuring ? "מודד..." : "מדוד רעש"}</span>
-                                        </button>
+                                        <div className="flex flex-col items-center gap-6">
+                                            <button 
+                                                onClick={toggleMeasurement}
+                                                className={`w-44 h-44 rounded-full flex flex-col items-center justify-center shadow-2xl transition-all border-b-8 relative ${measuring ? "bg-red-500 border-red-800 mic-active" : "bg-purple-600 border-purple-900 hover:scale-105 active-press"}`}
+                                            >
+                                                <Icon name="Mic" size={64} className="text-white mb-2" />
+                                                <span className="text-white font-black text-xl">{measuring ? "השמיעו רעש עם הקסטניינטות!" : "מדוד רעש"}</span>
+                                            </button>
+
+                                            {permissionStatus === "denied" && (
+                                                <div className="bg-red-50 p-6 rounded-3xl border-2 border-red-200 animate-pulse">
+                                                    <p className="text-red-900 font-bold mb-2">אופס! המיקרופון חסום 🔒</p>
+                                                    <p className="text-red-700 text-sm">גוגל חוסמת מיקרופון בתוך האתר. כדי שזה יעבוד, יש להשתמש בקישור הישיר של האפליקציה או לאשר גישה בהגדרות הדפדפן.</p>
+                                                </div>
+                                            )}
+                                        </div>
                                     ) : (
-                                        <div className="animate-bounceIn"><p className="text-3xl font-black text-purple-600 mb-10">{noiseResult}</p><button onClick={handleNext} className="w-full bg-purple-600 text-white py-6 rounded-3xl font-black text-2xl border-b-8 border-purple-900">שאלה הבאה</button></div>
+                                        <div className="animate-bounceIn">
+                                            <p className="text-4xl font-black text-purple-600 mb-10 drop-shadow-md">{noiseResult}</p>
+                                            <button onClick={handleNext} className="w-full bg-purple-600 text-white py-6 rounded-3xl font-black text-2xl border-b-8 border-purple-900 active-press">שאלה הבאה</button>
+                                        </div>
                                     )}
                                 </div>
                             </div>
